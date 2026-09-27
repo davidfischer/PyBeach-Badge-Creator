@@ -41,6 +41,8 @@ usage: createpdfs.py [-h] [-i INPUT_FLAG] [-o OUTPUT]
                      [--event-name EVENT_NAME] [--logo LOGO]
                      [--photo-opt-out-icon PHOTO_OPT_OUT_ICON]
                      [--guides | --no-guides] [--ribbon-color RIBBON_COLOR]
+                     [--background-image BACKGROUND_IMAGE] [--no-background]
+                     [--opacity OPACITY]
                      [csv_file]
 ```
 
@@ -48,9 +50,19 @@ See `uv run python createpdfs.py -h` for full details.
 
 ### Usage Examples
 
-**Generate badges with custom Tito export:**
+**Generate badges with custom Tito export (uses default background at 0.2 opacity):**
 ```bash
 uv run python createpdfs.py attendees_2026.csv -o pybeach_2026_badges.pdf
+```
+
+**Generate badges without any background image:**
+```bash
+uv run python createpdfs.py attendees_2026.csv --no-background
+```
+
+**Use a custom background image and opacity:**
+```bash
+uv run python createpdfs.py attendees_2026.csv --background-image my_background.png --opacity 0.25
 ```
 
 **Custom event title and conference date:**
@@ -93,3 +105,13 @@ The script directly parses [CSV exports](https://help.tito.io/en/articles/681190
 1. **Automatic Font Scaling**: Names and affiliations that exceed the badge width automatically step down in font size to prevent overlapping or truncation.
 2. **Blank / Walk-in Badges**: Set the name to `*` to generate badges without a name while still including the logo, date ribbon, and cutting guides.
 3. **Optimized SVG Rendering**: Vector SVG assets are cached and pre-scaled in memory, allowing large attendee lists to render quickly.
+4. **Lightened Background Art**: Badges feature `assets/pybeach2026-background.png` by default at 0.2 opacity to maintain high contrast with badge text. Backgrounds can be swapped, disabled (`--no-background`), or adjusted with `--opacity`.
+
+---
+
+## Testing and style checking
+
+```bash
+# Ensure the styles match
+uv run pre-commit run --all-files
+```

@@ -59,6 +59,26 @@ def format_pronouns(pronoun_str: str) -> str:
     return " ".join(word.capitalize() for word in cleaned.split())
 
 
+def resolve_asset_path(file_path: str | Path | None) -> Path | None:
+    """Resolve an asset path, checking both cwd and script directory.
+
+    Args:
+        file_path: Path string or Path object, or None.
+
+    Returns:
+        Resolved Path object, or None if file_path was None or empty.
+    """
+    if not file_path:
+        return None
+    path_obj = Path(file_path)
+    if path_obj.exists():
+        return path_obj
+    script_relative = Path(__file__).parent / file_path
+    if script_relative.exists():
+        return script_relative
+    return path_obj
+
+
 def load_scaled_svg(svg_path: str | Path, target_size: float):
     """Load an SVG file and pre-scale it to fit within target_size box.
 
@@ -69,8 +89,8 @@ def load_scaled_svg(svg_path: str | Path, target_size: float):
     Returns:
         Scaled ReportLab Drawing, or None if file cannot be loaded.
     """
-    path_obj = Path(svg_path)
-    if not path_obj.exists():
+    path_obj = resolve_asset_path(svg_path)
+    if not path_obj or not path_obj.exists():
         return None
     try:
         drawing = svg2rlg(str(path_obj))
@@ -86,6 +106,61 @@ def load_scaled_svg(svg_path: str | Path, target_size: float):
         return None
 
 
+def load_background_svg(svg_path: str | Path, width: float, height: float):
+    """Load an SVG background and scale it to badge dimensions.
+
+    Args:
+        svg_path: Path to SVG file on disk.
+        width: Target width in points.
+        height: Target height in points.
+
+    Returns:
+        Scaled ReportLab Drawing, or None if file cannot be loaded.
+    """
+    path_obj = resolve_asset_path(svg_path)
+    if not path_obj or not path_obj.exists():
+        return None
+    try:
+        drawing = svg2rlg(str(path_obj))
+        if drawing is None or drawing.width == 0 or drawing.height == 0:
+            return None
+        scale_x = width / drawing.width
+        scale_y = height / drawing.height
+        drawing.width = width
+        drawing.height = height
+        drawing.scale(scale_x, scale_y)
+        return drawing
+    except Exception as exc:
+        print(
+            f"Warning: Failed to load background SVG '{svg_path}': {exc}",
+            file=sys.stderr,
+        )
+        return None
+
+
+def validate_opacity(val: str) -> float:
+    """Validate opacity CLI argument is a float between 0.0 and 1.0.
+
+    Args:
+        val: Input string value from CLI.
+
+    Returns:
+        Float opacity value.
+
+    Raises:
+        argparse.ArgumentTypeError: If value is not a float or outside [0.0, 1.0].
+    """
+    try:
+        opacity = float(val)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Invalid float value: '{val}'.")
+    if not (0.0 <= opacity <= 1.0):
+        raise argparse.ArgumentTypeError(
+            f"Opacity must be between 0.0 and 1.0; got {val}."
+        )
+    return opacity
+
+
 # ---------------- BADGE CREATION ----------------
 def create_badges(
     csv_path: str | Path,
@@ -95,6 +170,8 @@ def create_badges(
     photo_opt_out_path: str | Path = "assets/no-photos.svg",
     with_guides: bool = True,
     ribbon_color: str = "#337ab7",
+    background_path: str | Path | None = "assets/pybeach2026-background.png",
+    opacity: float = 0.2,
 ) -> int:
     """Generate attendee badges PDF from a CSV export.
 
@@ -106,12 +183,14 @@ def create_badges(
         photo_opt_out_path: Path to photo opt-out SVG icon.
         with_guides: Whether to draw dashed cut lines around badges.
         ribbon_color: Hex color string for ribbon background.
+        background_path: Path to optional background image (PNG, JPG, SVG), or None for no background.
+        opacity: Opacity for the background image, from 0.0 (transparent) to 1.0 (opaque).
 
     Returns:
         Count of badges generated.
     """
-    csv_file = Path(csv_path)
-    if not csv_file.exists():
+    csv_file = resolve_asset_path(csv_path)
+    if not csv_file or not csv_file.exists():
         raise FileNotFoundError(f"Attendee CSV file not found: {csv_path}")
 
     df = pd.read_csv(csv_file)
@@ -138,6 +217,24 @@ def create_badges(
     guide_margin = 3
     edge_margin = 8
     ribbon_height = 30
+    background_bleed = 5
+
+    # Opacity validation & background loading
+    if not (0.0 <= opacity <= 1.0):
+        raise ValueError(f"Opacity must be between 0.0 and 1.0; got {opacity}.")
+    bg_alpha = opacity
+
+    bg_file = resolve_asset_path(background_path) if background_path else None
+    if bg_file and not bg_file.exists():
+        raise FileNotFoundError(f"Background image not found: {background_path}")
+
+    bg_drawing = None
+    if bg_file and bg_file.suffix.lower() == ".svg":
+        bg_drawing = load_background_svg(
+            bg_file,
+            badge_width + background_bleed * 2,
+            badge_height + background_bleed * 2,
+        )
 
     # 6 badges per letter page (2 columns x 3 rows)
     badge_xys = [
@@ -182,6 +279,28 @@ def create_badges(
 
         x = badge_xys[badge_count][0]
         y = badge_xys[badge_count][1]
+
+        # Background image (drawn behind all badge content, extending slightly beyond cut lines)
+        if bg_file and bg_alpha > 0.0:
+            c.saveState()
+            c.setFillAlpha(bg_alpha)
+            if bg_drawing:
+                c.setStrokeAlpha(bg_alpha)
+                renderPDF.draw(
+                    bg_drawing,
+                    c,
+                    x - background_bleed,
+                    y - background_bleed,
+                )
+            else:
+                c.drawImage(
+                    str(bg_file),
+                    x - background_bleed,
+                    y - background_bleed,
+                    width=badge_width + background_bleed * 2,
+                    height=badge_height + background_bleed * 2,
+                )
+            c.restoreState()
 
         # Photo opt-out icon (top left)
         if (
@@ -365,6 +484,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="#337ab7",
         help="Hex color for the bottom ribbon banner.",
     )
+    parser.add_argument(
+        "--background-image",
+        "--background",
+        dest="background_image",
+        default="assets/pybeach2026-background.png",
+        help="Path to badge background image. Defaults to assets/pybeach2026-background.png. Set to 'none' or '' to omit.",
+    )
+    parser.add_argument(
+        "--no-background",
+        "--no-background-image",
+        dest="no_background",
+        action="store_true",
+        default=False,
+        help="Disable background image on badges.",
+    )
+    parser.add_argument(
+        "--opacity",
+        dest="opacity",
+        type=validate_opacity,
+        default=0.2,
+        help="Background image opacity between 0.0 (transparent) and 1.0 (fully opaque).",
+    )
     return parser.parse_args(argv)
 
 
@@ -373,6 +514,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     csv_path = args.input_flag or args.csv_file or "sample_attendees.csv"
+    if args.no_background or (
+        args.background_image
+        and args.background_image.strip().lower() in ("none", "", "false", "no")
+    ):
+        background_path = None
+    else:
+        background_path = args.background_image
 
     try:
         count = create_badges(
@@ -383,6 +531,8 @@ def main(argv: list[str] | None = None) -> int:
             photo_opt_out_path=args.photo_opt_out_icon,
             with_guides=args.guides,
             ribbon_color=args.ribbon_color,
+            background_path=background_path,
+            opacity=args.opacity,
         )
         print(f"Successfully generated {count} badge(s) to '{args.output}'.")
         return 0
