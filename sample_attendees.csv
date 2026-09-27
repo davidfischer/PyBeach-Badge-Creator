@@ -1,10 +1,10 @@
-Number,Ticket,Ticket Company Name,Ticket Job Title,What school do you attend?,Photo opt-out,Pronouns,What name would you like printed on your badge?,Would you like your pronouns printed on your badge?,Order Reference
-101,Early Bird Corporate,Federal Bureau of Investigation,Special Agent,,Opt-in,He / Him,Fox Mulder,Yes,XF-1013
-102,Corporate,Federal Bureau of Investigation,Special Agent & Medical Doctor,,Opt-in,She / Her,Dr. Dana Scully,Yes,XF-2311
-103,Corporate,Federal Bureau of Investigation,Assistant Director,,Opt-in,He / Him,Walter S. Skinner,Yes,XF-0518
-104,Student,,,University of Maryland,Opt-in,He / Him,"Richard ""Ringo"" Langly",Yes,XF-0420
-105,Individual,,Surveillance Specialist,,Opt-out,He / Him,Melvin Frohike,Yes,XF-0315
-106,Individual,,,,Opt-out,,*,No,XF-9999
-107,Early Bird Corporate,The Lone Gunmen,Editor-in-Chief & Systems Analyst,,Opt-out,He / Him,John Fitzgerald Byers,Yes,XF-1122
-108,Early Bird Individual,,Special Agent,,Opt-in,She / Her,Monica Reyes,No,XF-0813
-109,Donate to PyBeach,The Syndicate,,,,,Trust No One,,XF-0000
+Number,Ticket,Ticket Company Name,Ticket Job Title,What school do you attend?,Photo opt-out,Pronouns,What name would you like printed on your badge?,Would you like your pronouns printed on your badge?,Order Reference,Email
+101,Early Bird Corporate,Federal Bureau of Investigation,Special Agent,,Opt-in,He / Him,Fox Mulder,Yes,XF-1013,fmulder@fbi.gov
+102,Corporate,Federal Bureau of Investigation,Special Agent & Medical Doctor,,Opt-in,She / Her,Dr. Dana Scully,Yes,XF-2311,dscully@fbi.gov
+103,Corporate,Federal Bureau of Investigation,Assistant Director,,Opt-in,He / Him,Walter S. Skinner,Yes,XF-0518,wskinner@fbi.gov
+104,Student,,,University of Maryland,Opt-in,He / Him,"Richard ""Ringo"" Langly",Yes,XF-0420,rlangly@umd.edu
+105,Individual,,Surveillance Specialist,,Opt-out,He / Him,Melvin Frohike,Yes,XF-0315,frohike@lonegunmen.org
+106,Individual,,,,Opt-out,,*,No,XF-9999,
+107,Early Bird Corporate,The Lone Gunmen,Editor-in-Chief & Systems Analyst,,Opt-out,He / Him,John Fitzgerald Byers,Yes,XF-1122,byers@lonegunmen.org
+108,Early Bird Individual,,Special Agent,,Opt-in,She / Her,Monica Reyes,No,XF-0813,mreyes@fbi.gov
+109,Donate to PyBeach,The Syndicate,,,,,Trust No One,,XF-0000,
