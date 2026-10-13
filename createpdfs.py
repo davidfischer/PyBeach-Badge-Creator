@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pandas as pd
 from reportlab.graphics import renderPDF
+from reportlab.graphics.barcode.qr import QrCodeWidget
+from reportlab.graphics.shapes import Drawing
+from reportlab.graphics.shapes import Rect
 from reportlab.lib.colors import HexColor
 from reportlab.lib.colors import black
 from reportlab.lib.colors import white
@@ -57,6 +60,102 @@ def format_pronouns(pronoun_str: str) -> str:
     cleaned = " ".join(pronoun_str.split())
     cleaned = re.sub(r"\s*/\s*", " / ", cleaned)
     return " ".join(word.capitalize() for word in cleaned.split())
+
+
+def escape_vcard(text: str) -> str:
+    """Escape special characters for vCard text fields.
+
+    Args:
+        text: Raw text string.
+
+    Returns:
+        Escaped text string according to RFC 2426.
+    """
+    return (
+        text.replace("\\", "\\\\")
+        .replace(";", r"\;")
+        .replace(",", r"\,")
+        .replace("\n", r"\n")
+    )
+
+
+def build_vcard(
+    name: str,
+    email: str,
+    company: str = "",
+    title: str = "",
+    note: str = "",
+) -> str:
+    """Build a standard vCard 3.0 contact string.
+
+    Args:
+        name: Full attendee name.
+        email: Attendee email address.
+        company: Organization or company name.
+        title: Job title or professional role.
+        note: Contextual note or event memory anchor.
+
+    Returns:
+        vCard 3.0 formatted string.
+    """
+    clean_name = name.strip()
+    parts = clean_name.split()
+    prefixes = {"dr.", "dr", "prof.", "prof", "mr.", "mr", "ms.", "ms", "mrs.", "mrs"}
+    if len(parts) > 2 and parts[0].lower() in prefixes:
+        prefix = parts[0]
+        first = parts[1]
+        last = " ".join(parts[2:])
+        n_field = f"{escape_vcard(last)};{escape_vcard(first)};;{escape_vcard(prefix)};"
+    elif len(parts) > 1:
+        first = parts[0]
+        last = " ".join(parts[1:])
+        n_field = f"{escape_vcard(last)};{escape_vcard(first)};;;"
+    elif parts:
+        n_field = f"{escape_vcard(parts[0])};;;;"
+    else:
+        n_field = ";;;;"
+
+    lines = [
+        "BEGIN:VCARD",
+        "VERSION:3.0",
+        f"FN:{escape_vcard(clean_name)}",
+        f"N:{n_field}",
+    ]
+    clean_company = company.strip()
+    if clean_company:
+        lines.append(f"ORG:{escape_vcard(clean_company)}")
+    clean_title = title.strip()
+    if clean_title:
+        lines.append(f"TITLE:{escape_vcard(clean_title)}")
+    clean_email = email.strip()
+    if clean_email:
+        lines.append(f"EMAIL;TYPE=INTERNET:{clean_email}")
+    clean_note = note.strip()
+    if clean_note:
+        lines.append(f"NOTE:{escape_vcard(clean_note)}")
+    lines.append("END:VCARD")
+    return "\n".join(lines)
+
+
+def create_qr_drawing(vcard_text: str, size: float = 54) -> Drawing:
+    """Generate a vector QR code ReportLab Drawing with a white background quiet zone.
+
+    Args:
+        vcard_text: Encoded vCard string payload.
+        size: Width and height of drawing in points.
+
+    Returns:
+        ReportLab Drawing containing the QR code.
+    """
+    drawing = Drawing(size, size)
+    drawing.add(Rect(0, 0, size, size, fillColor=white, strokeColor=None))
+    qr = QrCodeWidget(vcard_text)
+    qr.barWidth = size
+    qr.barHeight = size
+    qr.barLevel = "M"
+    qr.barBorder = 2
+    drawing.add(qr)
+    return drawing
 
 
 def resolve_asset_path(file_path: str | Path | None) -> Path | None:
@@ -172,6 +271,9 @@ def create_badges(
     ribbon_color: str = "#337ab7",
     background_path: str | Path | None = "assets/pybeach2026-background.png",
     opacity: float = 0.2,
+    qr_position: str = "top-right",
+    qr_size: float = 62.0,
+    vcard_note: str = "Met at PyBeach 2026",
 ) -> int:
     """Generate attendee badges PDF from a CSV export.
 
@@ -185,6 +287,9 @@ def create_badges(
         ribbon_color: Hex color string for ribbon background.
         background_path: Path to optional background image (PNG, JPG, SVG), or None for no background.
         opacity: Opacity for the background image, from 0.0 (transparent) to 1.0 (opaque).
+        qr_position: Placement for vCard QR code ('top-right', 'bottom-right', or 'none').
+        qr_size: Dimensions (width and height in points) for the QR code.
+        vcard_note: Contextual note embedded in the attendee vCard QR code.
 
     Returns:
         Count of badges generated.
@@ -246,9 +351,17 @@ def create_badges(
         (316, 111),
     ]
 
-    # Pre-load and scale SVGs once
-    logo_size = 96
-    photo_opt_out_size = 50
+    # Sizing for header elements based on QR position layout
+    if qr_position == "top-right":
+        logo_size = 74
+        photo_opt_out_size = 48
+    elif qr_position == "bottom-right":
+        logo_size = 64
+        photo_opt_out_size = 45
+    else:
+        logo_size = 96
+        photo_opt_out_size = 50
+
     logo_drawing = load_scaled_svg(logo_path, logo_size)
     photo_drawing = load_scaled_svg(photo_opt_out_path, photo_opt_out_size)
 
@@ -302,20 +415,51 @@ def create_badges(
                 )
             c.restoreState()
 
-        # Photo opt-out icon (top left)
-        if (
-            photo_drawing
-            and "Photo opt-out" in row
-            and row["Photo opt-out"] == "Opt-out"
-        ):
-            renderPDF.draw(
-                photo_drawing,
-                c,
-                x + edge_margin,
-                y + badge_height - photo_opt_out_size - edge_margin / 2,
-            )
+        # Extract attendee email for vCard QR code
+        email_val = ""
+        for col in ("Email", "Ticket Email", "Attendee Email"):
+            if col in row and not pd.isna(row[col]) and str(row[col]).strip():
+                email_val = str(row[col]).strip()
+                break
 
-        # Pronouns (top right)
+        # Company name for vCard ORG field
+        vcard_company = ""
+        comp_name = row.get("Ticket Company Name")
+        if not pd.isna(comp_name) and str(comp_name).strip():
+            vcard_company = str(comp_name).strip()
+        elif (
+            not pd.isna(row.get("What school do you attend?"))
+            and str(row.get("What school do you attend?")).strip()
+        ):
+            vcard_company = str(row.get("What school do you attend?")).strip()
+
+        # Job title for vCard TITLE field
+        vcard_title = ""
+        raw_title = row.get("Ticket Job Title")
+        if not pd.isna(raw_title) and str(raw_title).strip():
+            vcard_title = str(raw_title).strip()
+        elif str(row.get("Ticket", "")).startswith(("Early Bird Student", "Student")):
+            vcard_title = "Student"
+
+        # Build vCard QR code drawing if enabled and email present
+        qr_drawing = None
+        if qr_position != "none" and email_val and name:
+            note_str = (
+                ""
+                if not vcard_note or vcard_note.strip().lower() in ("none", "")
+                else vcard_note.strip()
+            )
+            vcard_payload = build_vcard(
+                name=name,
+                email=email_val,
+                company=vcard_company,
+                title=vcard_title,
+                note=note_str,
+            )
+            qr_drawing = create_qr_drawing(vcard_payload, size=qr_size)
+
+        # Retrieve pronouns if opted in
+        pronouns_text = ""
         pronouns_option = row.get("Would you like your pronouns printed on your badge?")
         if not pd.isna(pronouns_option) and str(pronouns_option).startswith("Yes"):
             raw_pronouns = row.get("Pronouns")
@@ -323,23 +467,7 @@ def create_badges(
                 "",
                 "-",
             ):
-                pronouns = format_pronouns(str(raw_pronouns).strip())
-                c.setFont("Helvetica", 14)
-                c.setFillColor(black)
-                c.drawRightString(
-                    x + badge_width - edge_margin,
-                    y + badge_height - (edge_margin * 2),
-                    pronouns,
-                )
-
-        # Event logo (top center)
-        if logo_drawing:
-            renderPDF.draw(
-                logo_drawing,
-                c,
-                x + (badge_width - logo_drawing.width) / 2,
-                y + badge_height - logo_drawing.height - 2,
-            )
+                pronouns_text = format_pronouns(str(raw_pronouns).strip())
 
         # Affiliation / subtitle line
         typ = str(row.get("Ticket", ""))
@@ -370,38 +498,230 @@ def create_badges(
             if not pd.isna(title) and str(title).strip():
                 company = str(title).strip()
 
-        # Attendee Name
+        # Cleaned attendee name
         cleaned_name = re.sub(r"\s+", " ", name).strip()
         available_name_width = badge_width - (edge_margin * 2)
-        font_size = return_fontsize_that_fits(
-            available_name_width, cleaned_name, 20, font_name="Helvetica-Bold"
-        )
-        c.setFont("Helvetica-Bold", font_size)
-        c.setFillColor(black)
 
-        name_y = y + badge_height - (128 if company else 138)
-        c.drawCentredString(x + badge_width / 2, name_y, cleaned_name)
-
-        # Subtitle / Company / School line
-        if company:
-            available_job_width = badge_width - (edge_margin * 2)
-            job_font_size = return_fontsize_that_fits(
-                available_job_width, company, 16, font_name="Helvetica"
-            )
-            c.setFont("Helvetica", job_font_size)
-            c.setFillColor(black)
-            c.drawCentredString(x + badge_width / 2, y + badge_height - 150, company)
-
-        # Order reference code (above ribbon, right-aligned)
         order_ref = row.get("Order Reference")
-        if not pd.isna(order_ref) and str(order_ref).strip():
-            c.setFont("Helvetica", 10)
-            c.setFillColor(black)
-            c.drawRightString(
-                x + badge_width - edge_margin,
-                y + ribbon_height + 10,
-                str(order_ref).strip(),
-            )
+        has_order_ref = not pd.isna(order_ref) and bool(str(order_ref).strip())
+
+        # Render elements based on QR position layout
+        if qr_position == "top-right":
+            # Photo opt-out icon (top left)
+            if (
+                photo_drawing
+                and "Photo opt-out" in row
+                and row["Photo opt-out"] == "Opt-out"
+            ):
+                renderPDF.draw(
+                    photo_drawing,
+                    c,
+                    x + edge_margin,
+                    y + badge_height - photo_opt_out_size - 5,
+                )
+
+            # Event logo (top center)
+            if logo_drawing:
+                renderPDF.draw(
+                    logo_drawing,
+                    c,
+                    x + (badge_width - logo_drawing.width) / 2,
+                    y + badge_height - logo_drawing.height - 5,
+                )
+
+            # vCard QR code (top right)
+            if qr_drawing:
+                renderPDF.draw(
+                    qr_drawing,
+                    c,
+                    x + badge_width - edge_margin - qr_size,
+                    y + badge_height - qr_size - 5,
+                )
+
+            # Determine vertical placement for Name, Pronouns, and Affiliation
+            if pronouns_text and company:
+                name_y = y + 109
+                pronouns_y = y + 85
+                company_y = y + 61
+            elif company:
+                name_y = y + 101
+                pronouns_y = None
+                company_y = y + 67
+            elif pronouns_text:
+                name_y = y + 101
+                pronouns_y = y + 77
+                company_y = None
+            else:
+                name_y = y + 88
+                pronouns_y = None
+                company_y = None
+
+            if cleaned_name:
+                font_size = return_fontsize_that_fits(
+                    available_name_width, cleaned_name, 20, font_name="Helvetica-Bold"
+                )
+                c.setFont("Helvetica-Bold", font_size)
+                c.setFillColor(black)
+                c.drawCentredString(x + badge_width / 2, name_y, cleaned_name)
+
+            if pronouns_text and pronouns_y is not None:
+                c.setFont("Helvetica", 12)
+                c.setFillColor(HexColor("#555555"))
+                c.drawCentredString(x + badge_width / 2, pronouns_y, pronouns_text)
+
+            if company and company_y is not None:
+                job_font_size = return_fontsize_that_fits(
+                    available_name_width, company, 14, font_name="Helvetica"
+                )
+                c.setFont("Helvetica", job_font_size)
+                c.setFillColor(black)
+                c.drawCentredString(x + badge_width / 2, company_y, company)
+
+            # Order reference code (above ribbon, right-aligned)
+            if has_order_ref:
+                c.setFont("Helvetica", 10)
+                c.setFillColor(black)
+                c.drawRightString(
+                    x + badge_width - edge_margin,
+                    y + ribbon_height + 12,
+                    str(order_ref).strip(),
+                )
+
+        elif qr_position == "bottom-right":
+            # Photo opt-out icon (top left)
+            if (
+                photo_drawing
+                and "Photo opt-out" in row
+                and row["Photo opt-out"] == "Opt-out"
+            ):
+                renderPDF.draw(
+                    photo_drawing,
+                    c,
+                    x + edge_margin,
+                    y + badge_height - photo_opt_out_size - 6,
+                )
+
+            # Event logo (top center)
+            if logo_drawing:
+                renderPDF.draw(
+                    logo_drawing,
+                    c,
+                    x + (badge_width - logo_drawing.width) / 2,
+                    y + badge_height - logo_drawing.height - 6,
+                )
+
+            # Pronouns (top right)
+            if pronouns_text:
+                c.setFont("Helvetica", 13)
+                c.setFillColor(black)
+                c.drawRightString(
+                    x + badge_width - edge_margin,
+                    y + badge_height - 18,
+                    pronouns_text,
+                )
+
+            # Attendee Name
+            if company:
+                name_y = y + 116
+                company_y = y + 96
+            else:
+                name_y = y + 105
+                company_y = None
+
+            if cleaned_name:
+                font_size = return_fontsize_that_fits(
+                    available_name_width, cleaned_name, 20, font_name="Helvetica-Bold"
+                )
+                c.setFont("Helvetica-Bold", font_size)
+                c.setFillColor(black)
+                c.drawCentredString(x + badge_width / 2, name_y, cleaned_name)
+
+            if company and company_y is not None:
+                job_font_size = return_fontsize_that_fits(
+                    available_name_width, company, 13, font_name="Helvetica"
+                )
+                c.setFont("Helvetica", job_font_size)
+                c.setFillColor(black)
+                c.drawCentredString(x + badge_width / 2, company_y, company)
+
+            # vCard QR code (bottom right)
+            if qr_drawing:
+                renderPDF.draw(
+                    qr_drawing,
+                    c,
+                    x + badge_width - edge_margin - qr_size,
+                    y + 38,
+                )
+
+            # Order reference code (bottom left to counter-balance QR)
+            if has_order_ref:
+                c.setFont("Helvetica", 10)
+                c.setFillColor(black)
+                c.drawString(
+                    x + edge_margin + 2,
+                    y + 42,
+                    f"Ref: {str(order_ref).strip()}",
+                )
+
+        else:
+            # Original layout without QR code
+            if (
+                photo_drawing
+                and "Photo opt-out" in row
+                and row["Photo opt-out"] == "Opt-out"
+            ):
+                renderPDF.draw(
+                    photo_drawing,
+                    c,
+                    x + edge_margin,
+                    y + badge_height - photo_opt_out_size - edge_margin / 2,
+                )
+
+            if pronouns_text:
+                c.setFont("Helvetica", 14)
+                c.setFillColor(black)
+                c.drawRightString(
+                    x + badge_width - edge_margin,
+                    y + badge_height - (edge_margin * 2),
+                    pronouns_text,
+                )
+
+            if logo_drawing:
+                renderPDF.draw(
+                    logo_drawing,
+                    c,
+                    x + (badge_width - logo_drawing.width) / 2,
+                    y + badge_height - logo_drawing.height - 2,
+                )
+
+            if cleaned_name:
+                font_size = return_fontsize_that_fits(
+                    available_name_width, cleaned_name, 20, font_name="Helvetica-Bold"
+                )
+                c.setFont("Helvetica-Bold", font_size)
+                c.setFillColor(black)
+                name_y = y + badge_height - (128 if company else 138)
+                c.drawCentredString(x + badge_width / 2, name_y, cleaned_name)
+
+            if company:
+                available_job_width = badge_width - (edge_margin * 2)
+                job_font_size = return_fontsize_that_fits(
+                    available_job_width, company, 16, font_name="Helvetica"
+                )
+                c.setFont("Helvetica", job_font_size)
+                c.setFillColor(black)
+                c.drawCentredString(
+                    x + badge_width / 2, y + badge_height - 150, company
+                )
+
+            if has_order_ref:
+                c.setFont("Helvetica", 10)
+                c.setFillColor(black)
+                c.drawRightString(
+                    x + badge_width - edge_margin,
+                    y + ribbon_height + 10,
+                    str(order_ref).strip(),
+                )
 
         # Bottom ribbon
         c.setFillColor(banner_color)
@@ -506,6 +826,33 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=0.2,
         help="Background image opacity between 0.0 (transparent) and 1.0 (fully opaque).",
     )
+    parser.add_argument(
+        "--qr-position",
+        dest="qr_position",
+        choices=["top-right", "bottom-right", "none"],
+        default="top-right",
+        help="Placement for attendee vCard QR code ('top-right', 'bottom-right', or 'none').",
+    )
+    parser.add_argument(
+        "--no-qr",
+        dest="no_qr",
+        action="store_true",
+        default=False,
+        help="Disable attendee vCard QR codes on badges.",
+    )
+    parser.add_argument(
+        "--qr-size",
+        dest="qr_size",
+        type=float,
+        default=62.0,
+        help="Width and height for the vCard QR code in points (default: 62 = 0.86 in).",
+    )
+    parser.add_argument(
+        "--vcard-note",
+        dest="vcard_note",
+        default="Met at PyBeach 2026",
+        help="Contextual note to include in attendee vCard QR codes. Set to 'none' or '' to omit.",
+    )
     return parser.parse_args(argv)
 
 
@@ -522,6 +869,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         background_path = args.background_image
 
+    qr_pos = "none" if args.no_qr else args.qr_position
+
     try:
         count = create_badges(
             csv_path=csv_path,
@@ -533,6 +882,9 @@ def main(argv: list[str] | None = None) -> int:
             ribbon_color=args.ribbon_color,
             background_path=background_path,
             opacity=args.opacity,
+            qr_position=qr_pos,
+            qr_size=args.qr_size,
+            vcard_note=args.vcard_note,
         )
         print(f"Successfully generated {count} badge(s) to '{args.output}'.")
         return 0
